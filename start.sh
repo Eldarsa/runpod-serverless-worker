@@ -27,7 +27,7 @@ if [ -f "/workspace/venv/bin/activate" ]; then
       --nowebui \
       --skip-version-check \
       --no-hashing \
-      --no-download-sd-model > /workspace/logs/webui.log 2>&1 &
+      --no-download-sd-model &
     deactivate
 else
     echo "ERROR: The Python Virtual Environment (/workspace/venv/bin/activate) could not be activated"
