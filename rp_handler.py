@@ -3,12 +3,14 @@ import requests
 import time
 import os
 import traceback
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from requests.adapters import HTTPAdapter, Retry
 
 from runpod.serverless.utils.rp_validator import validate
 from runpod.serverless.modules.rp_logger import RunPodLogger
-from typing import Any, Dict, List, Optional, Tuple, Union
 
 from schemas.input import INPUT_SCHEMA
 from schemas.api import API_SCHEMA
@@ -17,6 +19,9 @@ from schemas.txt2img import TXT2IMG_SCHEMA
 from schemas.interrogate import INTERROGATE_SCHEMA
 from schemas.sync import SYNC_SCHEMA
 from schemas.download import DOWNLOAD_SCHEMA
+
+# Import the filesystem utility
+from utils.filesystem import list_filesystem
 
 BASE_URI: str = 'http://127.0.0.1:3000'
 TIMEOUT: int = 600
@@ -193,83 +198,86 @@ def validate_payload(job: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any]]:
     return endpoint, job['input']['api']['method'], validated_input
 
 
-
-
 def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     """
     Main handler function for processing RunPod jobs.
-
-    Validates input, API configuration, and payload, then processes the request
-    according to the specified endpoint and method.
-
-    Args:
-        job: The job dictionary containing all input data and configuration.
-
-    Returns:
-        A dictionary containing the job results or error information.
     """
-    validated_input = validate_input(job)
-
-    if 'errors' in validated_input:
-        return {
-            'error': '\n'.join(validated_input['errors'])
-        }
-
-    validated_api = validate_api(job)
-
-    if 'errors' in validated_api:
-        return {
-            'error': '\n'.join(validated_api['errors'])
-        }
-
-    endpoint, method, validated_payload = validate_payload(job)
-
-    if 'errors' in validated_payload:
-        return {
-            'error': '\n'.join(validated_payload['errors'])
-        }
-
-    if 'validated_input' in validated_payload:
-        payload = validated_payload['validated_input']
-    else:
-        payload = validated_payload
-
+    job_input = job['input']
+    
+    # Check if this is a filesystem listing request
+    if job_input.get('list_filesystem'):
+        start_path = job_input.get('start_path', '/')
+        max_depth = job_input.get('max_depth', 10)
+        logger.info(f"Listing filesystem from {start_path} with max depth {max_depth}", job['id'])
+        
+        try:
+            result = list_filesystem(start_path, max_depth)
+            return {
+                "filesystem": result
+            }
+        except Exception as e:
+            logger.error(f"Error listing filesystem: {str(e)}", job['id'])
+            return {
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+    
+    # Continue with regular API request handling
     try:
-        logger.info(f'Sending {method} request to: /{endpoint}', job['id'])
-
+        # Validate the input
+        validation_error = validate_input(job)
+        if 'errors' in validation_error:
+            return {
+                "error": validation_error['errors']
+            }
+        
+        # Validate the API configuration
+        api_validation = validate_api(job)
+        if 'errors' in api_validation:
+            return {
+                "error": api_validation['errors']
+            }
+        
+        # Wait for the service to be available
+        wait_for_service(f"{BASE_URI}/docs")
+        
+        # Process the request based on the API endpoint and method
+        endpoint, method, payload = validate_payload(job)
+        
+        if 'errors' in payload:
+            return {
+                "error": payload['errors']
+            }
+        
+        logger.info(f"Request: {method} /{endpoint}", job['id'])
+        
         if method == 'GET':
             response = send_get_request(endpoint)
-        elif method == 'POST':
-            response = send_post_request(endpoint, payload, job['id'])
-
-        if response.status_code == 200:
-            return response.json()
-
-        resp_json = response.json()
-        logger.error(f'HTTP Status code: {response.status_code}', job['id'])
-        logger.error(f'Response: {resp_json}', job['id'])
-
-        if 'error' in resp_json and 'errors' in resp_json:
-            error = resp_json.get('error')
-            errors = resp_json.get('errors')
-            error_msg = f'{error}: {errors}'
         else:
-            error_msg = f'A1111 status code: {response.status_code}'
-
-        return {
-            'error': error_msg,
-            'output': resp_json,
-            'refresh_worker': True
-        }
-
+            response = send_post_request(endpoint, payload, job['id'])
+        
+        if response.status_code >= 400:
+            logger.error(f"Error: HTTP {response.status_code}", job['id'])
+            logger.error(f"Response: {response.text}", job['id'])
+            return {
+                "error": f"HTTP {response.status_code}",
+                "response": response.text
+            }
+        
+        # Return successful response
+        try:
+            return response.json()
+        except ValueError:
+            return {
+                "content": response.text
+            }
+    
     except Exception as e:
-        logger.error(f'An exception was raised: {e}')
+        logger.error(f"Error: {str(e)}", job['id'])
         return {
-            'error': traceback.format_exc(),
-            'refresh_worker': True
+            "error": str(e),
+            "traceback": traceback.format_exc()
         }
 
-if __name__ == '__main__':
-    runpod.serverless.start({
-        'handler': handler
-    })
+# Start the serverless function
+runpod.start(handler)
