@@ -277,13 +277,20 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             "traceback": traceback.format_exc()
         }
 
-if __name__ == '__main__':
-    wait_for_service(f'{BASE_URI}/sdapi/v1/sd-models')
-    logger.info('A1111 Stable Diffusion API is ready')
-    logger.info('Starting RunPod Serverless...')
-    runpod.serverless.start({
-        'handler': handler
-    })
+logger.info('A1111 Stable Diffusion API is ready')
+logger.info('Starting RunPod Serverless...')
+runpod.serverless.start({
+    'handler': handler
+})
+
+
+# if __name__ == '__main__':
+#     wait_for_service(f'{BASE_URI}/sdapi/v1/sd-models')
+#     logger.info('A1111 Stable Diffusion API is ready')
+#     logger.info('Starting RunPod Serverless...')
+#     runpod.serverless.start({
+#         'handler': handler
+#     })
 
 
 def list_filesystem(root_path: str = '/', max_depth: int = 10, current_depth: int = 0) -> Dict[str, Any]:
